@@ -1,0 +1,45 @@
+{
+  "name": "opencode-image-compact",
+  "version": "0.1.0",
+  "description": "OpenCode plugin that automatically compresses images exceeding Anthropic's 5MB base64 API limit",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "opencode",
+    "plugin",
+    "image",
+    "compression",
+    "anthropic",
+    "5mb",
+    "base64"
+  ],
+  "author": "OpenCode Community",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/opencode-ai/opencode-image-compact"
+  },
+  "dependencies": {
+    "sharp": "^0.33.0"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.2.27"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.2.27",
+    "@types/bun": "latest",
+    "typescript": "^5.0.0",
+    "tsup": "^8.0.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build"
+  }
+}
