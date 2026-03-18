@@ -19,11 +19,10 @@
     "5mb",
     "base64"
   ],
-  "author": "OpenCode Community",
-  "license": "MIT",
+  "author": "JlMoreno00",
   "repository": {
     "type": "git",
-    "url": "https://github.com/opencode-ai/opencode-image-compact"
+    "url": "https://github.com/JlMoreno00/opencode-image-compact"
   },
   "dependencies": {
     "sharp": "^0.33.0"
