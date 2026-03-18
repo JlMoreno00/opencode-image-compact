@@ -1,10 +1,14 @@
+import fs from "fs/promises";
+import { fileURLToPath } from "url";
 import type { CompressionOptions } from "../types.ts";
 import { parseDataUri, isOversized, isSupportedImage } from "../detect.ts";
 import { compressImage } from "../compress.ts";
+import { MAX_BASE64_BYTES } from "../config.ts";
 import {
   logCompression,
   logPassthrough,
   logError,
+  logWarning,
 } from "../logger.ts";
 
 type Attachment = { mime: string; url: string };
@@ -19,25 +23,81 @@ type AnyPart = {
   };
 };
 
+/**
+ * Resolve the raw image buffer and base64 string from any URL format.
+ *
+ * Supported formats:
+ *  - data:image/...;base64,... — inline data URI (paste path)
+ *  - file:///path/to/img.png  — file protocol URL (drag-drop path)
+ *  - /absolute/path/to/img.png — bare absolute file path
+ *
+ * Returns null if the URL is not a recognised format or the MIME is
+ * unsupported.
+ */
+async function resolveImageBuffer(
+  url: string,
+  mime: string,
+): Promise<{ rawBuffer: Buffer; base64: string } | null> {
+  // 1. Try data URI first (most common for paste)
+  const parsed = parseDataUri(url);
+  if (parsed) {
+    return { rawBuffer: parsed.rawBuffer, base64: parsed.base64 };
+  }
+
+  // 2. file:// protocol (drag-drop from file manager)
+  if (url.startsWith("file://")) {
+    try {
+      const filePath = fileURLToPath(url);
+      const rawBuffer = await fs.readFile(filePath);
+      const base64 = rawBuffer.toString("base64");
+      return { rawBuffer, base64 };
+    } catch {
+      logWarning(`could not read file URL: ${url.slice(0, 80)}`);
+      return null;
+    }
+  }
+
+  // 3. Bare absolute path (unlikely but defensive)
+  if (url.startsWith("/")) {
+    try {
+      const rawBuffer = await fs.readFile(url);
+      const base64 = rawBuffer.toString("base64");
+      return { rawBuffer, base64 };
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 async function processAttachment(
   attachment: Attachment,
   options: CompressionOptions,
 ): Promise<void> {
   if (!isSupportedImage(attachment.mime)) return;
 
-  const parsed = parseDataUri(attachment.url);
-  if (!parsed) return;
+  const resolved = await resolveImageBuffer(attachment.url, attachment.mime);
+  if (!resolved) {
+    logPassthrough("unresolvable URL format");
+    return;
+  }
 
-  if (!isOversized(parsed.base64)) {
+  if (!isOversized(resolved.base64)) {
     logPassthrough("under size limit");
     return;
   }
 
-  const result = await compressImage(parsed.rawBuffer, parsed.mime, options);
+  logWarning(
+    `oversized image detected (${resolved.base64.length} base64 chars > ${MAX_BASE64_BYTES} limit), compressing...`,
+  );
+
+  const result = await compressImage(resolved.rawBuffer, attachment.mime, options);
 
   if (result.wasCompressed) {
     const compressed64 = result.buffer.toString("base64");
     attachment.url = `data:${result.mime};base64,${compressed64}`;
+    attachment.mime = result.mime;
     logCompression(result);
   } else {
     logPassthrough("compression not effective");
@@ -51,11 +111,12 @@ function isDirectImagePart(part: AnyPart): part is AnyPart & Attachment {
 /**
  * Creates a handler for the `experimental.chat.messages.transform` hook.
  *
- * Two image paths are handled:
- * 1. Nested: `parts[j].state.attachments[k].url` when `parts[j].type ===
- *    "tool"` and `state.status === "completed"` — the read-tool path.
- * 2. Direct: `parts[j].mime` + `parts[j].url` when both fields are present
- *    on the part itself — the paste and drag-drop path.
+ * Three image paths are handled:
+ * 1. Nested tool attachments: `parts[j].state.attachments[k]` when
+ *    `parts[j].type === "tool"` and `state.status === "completed"`.
+ * 2. Direct FilePart: `parts[j].type === "file"` with `mime` + `url` — the
+ *    paste and drag-drop path.
+ * 3. Legacy direct: any part with `mime` + `url` fields (fallback).
  *
  * Unknown part shapes and individual attachment errors are silently
  * absorbed so the hook never makes the conversation worse than without it.
@@ -66,8 +127,12 @@ export function createMessageHook(options: CompressionOptions) {
     output: { messages: { info: unknown; parts: AnyPart[] }[] },
   ): Promise<void> => {
     try {
+      let processed = 0;
+      let compressed = 0;
+
       for (const msg of output.messages) {
         for (const part of msg.parts) {
+          // Path 1: Tool result attachments (read tool, MCP tools)
           if (part.type === "tool") {
             if (!part.state || part.state.status !== "completed") continue;
 
@@ -76,17 +141,26 @@ export function createMessageHook(options: CompressionOptions) {
 
             for (const attachment of attachments) {
               try {
+                processed++;
+                const before = attachment.url.length;
                 await processAttachment(attachment, options);
+                if (attachment.url.length < before) compressed++;
               } catch (err) {
-                // One bad attachment must not abort the rest of the pass.
                 logError(
                   err instanceof Error ? err : new Error(String(err)),
                 );
               }
             }
-          } else if (isDirectImagePart(part)) {
+            continue;
+          }
+
+          // Path 2 & 3: Direct image parts (paste, drag-drop, FilePart)
+          if (isDirectImagePart(part)) {
             try {
+              processed++;
+              const before = part.url.length;
               await processAttachment(part, options);
+              if (part.url.length < before) compressed++;
             } catch (err) {
               logError(
                 err instanceof Error ? err : new Error(String(err)),
@@ -95,9 +169,13 @@ export function createMessageHook(options: CompressionOptions) {
           }
         }
       }
+
+      if (compressed > 0) {
+        console.error(
+          `[image-compact] Transform pass complete: ${compressed}/${processed} images compressed`,
+        );
+      }
     } catch (err) {
-      // Top-level guard: structural errors are absorbed so the plugin
-      // never makes things worse than without it.
       logError(err instanceof Error ? err : new Error(String(err)));
     }
   };

@@ -106,6 +106,17 @@ This plugin only helps when OpenCode is sending an inline image payload that the
 
 Check that `opencode-image-compact` is listed in the `plugin` array in `opencode.json`. The current release does not require options, so the plugin entry should just be the package name string.
 
+If you use `oh-my-opencode`, place `opencode-image-compact` **before** it in the array. There is a known issue where the OpenCode plugin loader can stop processing subsequent plugins after loading `oh-my-opencode`:
+
+```json
+{
+  "plugin": [
+    "opencode-image-compact",
+    "oh-my-opencode@latest"
+  ]
+}
+```
+
 ### My PNG was not converted to JPEG
 
 That is expected in this release. The built-in default is `formatConversion: "never"`, which preserves the original format.

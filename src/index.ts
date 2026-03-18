@@ -3,12 +3,9 @@ import { mergeConfig } from "./config";
 import { createToolHook } from "./hooks/tool-hook";
 import { createMessageHook } from "./hooks/message-hook";
 
-/**
- * OpenCode Image Compact Plugin
- * Automatically compresses images exceeding Anthropic's 5MB base64 API limit
- */
 export const ImageCompact: Plugin = async () => {
   const mergedOptions = mergeConfig();
+  console.error("[image-compact] Plugin loaded, hooks registered");
 
   return {
     "tool.execute.after": createToolHook(mergedOptions),
